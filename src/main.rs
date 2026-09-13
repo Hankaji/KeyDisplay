@@ -1,29 +1,36 @@
-use gpui::{
-    App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
-};
+mod key_overlay;
 
-struct HelloWorld {
-    text: SharedString,
-}
+use gpui::{
+    App, Application, Context, IntoElement, ParentElement, Styled, Window, WindowOptions, div,
+    prelude::*, rgb,
+};
+use key_overlay::KeyOverlay;
+
+struct HelloWorld;
 
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
-            .gap_3()
             .bg(rgb(0x505050))
             .size_full()
-            .justify_center()
-            .items_center()
+            .justify_end()
             .shadow_lg()
             .border_1()
             .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
-            .child(format!("Hello, {}!", self.text))
-            .child(div().flex().gap_2().child(div().size_8().bg(gpui::red())))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .w_full()
+                    .gap_2()
+                    .p_2()
+                    .child(KeyOverlay::new("A"))
+                    .child(KeyOverlay::new("Space")),
+            )
     }
 }
 
@@ -33,11 +40,7 @@ fn main() {
             WindowOptions {
                 ..Default::default()
             },
-            |_, cx| {
-                cx.new(|_| HelloWorld {
-                    text: "World".into(),
-                })
-            },
+            |_, cx| cx.new(|_| HelloWorld),
         )
         .unwrap();
     });
