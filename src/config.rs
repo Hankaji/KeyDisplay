@@ -1,4 +1,4 @@
-use gpui::{Rgba, rgb};
+use gpui::{rgb, Rgba};
 use serde::Deserialize;
 use std::{
     error::Error,
@@ -7,15 +7,23 @@ use std::{
 };
 
 #[derive(Debug, Deserialize)]
+pub struct KeyConfig {
+    pub key: String,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub bg_color: Rgba,
+    #[serde(rename = "Keys")]
+    pub keys: Vec<KeyConfig>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            bg_color: rgb(0x000000),
+            bg_color: rgb(0x505050),
+            keys: Vec::new(),
         }
     }
 }

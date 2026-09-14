@@ -1,21 +1,21 @@
 use gpui::{
-    App, IntoElement, ParentElement, RenderOnce, Styled, Window, div, prelude::FluentBuilder, px,
-    rgb,
+    App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
+    prelude::FluentBuilder, px, rgb,
 };
 
 /// Each tuple is `(top_px, height_px)` relative to the square's top edge.
 /// top_px can be negative (bar extending above the square, clipped by overflow_hidden).
 #[derive(IntoElement)]
 pub struct KeyOverlay {
-    label: &'static str,
+    label: SharedString,
     bars: Vec<(f32, f32)>,
     is_pressed: bool,
 }
 
 impl KeyOverlay {
-    pub fn new(label: &'static str) -> Self {
+    pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
-            label,
+            label: label.into(),
             bars: vec![],
             is_pressed: false,
         }

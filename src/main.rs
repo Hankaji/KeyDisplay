@@ -120,17 +120,27 @@ impl Render for HelloWorld {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.window_height = window.viewport_size().height.into();
 
-        let is_a_pressed = self
-            .active_bars
-            .get("a")
-            .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
-            .unwrap_or(false);
-
-        let bars_a: Vec<(f32, f32)> = self
-            .active_bars
-            .get("a")
-            .map(|bs| bs.iter().map(|b| b.geometry()).collect())
-            .unwrap_or_default();
+        let overlays: Vec<KeyOverlay> = self
+            .config
+            .keys
+            .iter()
+            .map(|kc| {
+                let key_lower = kc.key.to_lowercase();
+                let is_pressed = self
+                    .active_bars
+                    .get(&key_lower)
+                    .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
+                    .unwrap_or(false);
+                let bars = self
+                    .active_bars
+                    .get(&key_lower)
+                    .map(|bs| bs.iter().map(|b| b.geometry()).collect())
+                    .unwrap_or_default();
+                KeyOverlay::new(kc.key.clone())
+                    .bars(bars)
+                    .pressed(is_pressed)
+            })
+            .collect();
 
         div()
             .track_focus(&self.focus_handle)
@@ -169,7 +179,7 @@ impl Render for HelloWorld {
                     .w_full()
                     .gap_2()
                     .p_2()
-                    .child(KeyOverlay::new("A").bars(bars_a).pressed(is_a_pressed)),
+                    .children(overlays),
             )
     }
 }
