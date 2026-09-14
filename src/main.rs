@@ -1,4 +1,5 @@
 mod config;
+mod key_observer;
 mod key_overlay;
 
 use std::collections::HashMap;
@@ -6,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use config::Config;
 use gpui::{
-    App, Application, AsyncApp, Context, FocusHandle, Hsla, IntoElement, KeyDownEvent, KeyUpEvent,
-    Modifiers, ModifiersChangedEvent, ParentElement, Styled, Task, WeakEntity, Window,
-    WindowOptions, div, linear_color_stop, linear_gradient, prelude::*, px, rgb,
+    App, Application, AsyncApp, Context, Hsla, IntoElement, ParentElement, Styled, Task,
+    WeakEntity, Window, WindowOptions, div, linear_color_stop, linear_gradient, prelude::*, px,
+    rgb,
 };
 use key_overlay::KeyOverlay;
 
@@ -38,26 +39,67 @@ impl FloatingBar {
 }
 
 struct HelloWorld {
-    focus_handle: FocusHandle,
     held_keys: HashMap<String, Instant>,
     floating_bars: HashMap<String, Vec<FloatingBar>>,
     _animation_task: Option<Task<()>>,
+    _key_observer_task: Option<Task<()>>,
     window_height: f32,
     config: Config,
-    prev_modifiers: Modifiers,
 }
 
 impl HelloWorld {
-    fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            focus_handle: cx.focus_handle(),
+    fn new(cx: &mut Context<Self>, key_observer: key_observer::KeyObserver) -> Self {
+        let mut this = Self {
             held_keys: HashMap::new(),
             floating_bars: HashMap::new(),
             _animation_task: None,
+            _key_observer_task: None,
             window_height: 1080.0,
             config: Config::load(),
-            prev_modifiers: Modifiers::default(),
-        }
+        };
+        this._key_observer_task = Some(Self::start_key_observer(cx, key_observer));
+        this
+    }
+
+    fn start_key_observer(cx: &mut Context<Self>, observer: key_observer::KeyObserver) -> Task<()> {
+        // Offload the blocking recv() to a dedicated OS thread.
+        // The async task drains the channel non-blockingly every frame.
+        let (tx, rx) = std::sync::mpsc::channel::<key_observer::KeyEvent>();
+        std::thread::spawn(move || {
+            while let Some(ev) = observer.recv() {
+                if tx.send(ev).is_err() {
+                    break; // view dropped, stop forwarding
+                }
+            }
+        });
+
+        cx.spawn(
+            async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
+
+                    let still_alive = view.update(cx, |this, cx| {
+                        for ev in rx.try_iter() {
+                            let key_name = key_observer::key_code_to_name(ev.key);
+                            match ev.state {
+                                key_observer::KeyState::Down | key_observer::KeyState::Repeat => {
+                                    this.press_key(key_name, cx);
+                                }
+                                key_observer::KeyState::Up => {
+                                    this.release_key(&key_name, cx);
+                                }
+                            }
+                        }
+                    });
+
+                    if still_alive.is_err() {
+                        break;
+                    }
+                }
+            },
+        )
     }
 
     fn start_animation(cx: &mut Context<Self>) -> Task<()> {
@@ -115,15 +157,8 @@ impl HelloWorld {
     }
 }
 
-const MODIFIERS: &[(&str, fn(&Modifiers) -> bool)] = &[
-    ("shift", |m| m.shift),
-    ("ctrl", |m| m.control),
-    ("alt", |m| m.alt),
-    ("super", |m| m.platform),
-];
-
 impl Render for HelloWorld {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.window_height = window.viewport_size().height.into();
 
         let overlays: Vec<KeyOverlay> = self
@@ -160,28 +195,6 @@ impl Render for HelloWorld {
         };
 
         div()
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                this.press_key(event.keystroke.key.clone(), cx);
-            }))
-            .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
-                this.release_key(&event.keystroke.key, cx);
-            }))
-            .on_modifiers_changed(cx.listener(
-                |this, event: &ModifiersChangedEvent, _window, cx| {
-                    let new = event.modifiers;
-                    for (name, get) in MODIFIERS {
-                        let was = get(&this.prev_modifiers);
-                        let is = get(&new);
-                        if !was && is {
-                            this.press_key(name.to_string(), cx);
-                        } else if was && !is {
-                            this.release_key(name, cx);
-                        }
-                    }
-                    this.prev_modifiers = new;
-                },
-            ))
             .flex()
             .flex_col()
             .relative()
@@ -215,13 +228,14 @@ impl Render for HelloWorld {
 }
 
 fn main() {
+    let Some(key_observer) = key_observer::KeyObserver::spawn() else {
+        eprintln!("Failed to start key observer – check /dev/input permissions.");
+        return;
+    };
+
     Application::new().run(|cx: &mut App| {
-        cx.open_window(WindowOptions::default(), |window, cx| {
-            cx.new(|cx| {
-                let view = HelloWorld::new(cx);
-                window.focus(&view.focus_handle);
-                view
-            })
+        cx.open_window(WindowOptions::default(), |_window, cx| {
+            cx.new(|cx| HelloWorld::new(cx, key_observer))
         })
         .unwrap();
     });
