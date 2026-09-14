@@ -1,8 +1,10 @@
+mod config;
 mod key_overlay;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use config::Config;
 use gpui::{
     App, Application, AsyncApp, Context, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent,
     ParentElement, Styled, Task, WeakEntity, Window, WindowOptions, div, prelude::*, rgb,
@@ -66,6 +68,7 @@ struct HelloWorld {
     /// Kept alive so the animation loop isn't cancelled.
     _animation_task: Option<Task<()>>,
     window_height: f32,
+    config: Config,
 }
 
 impl HelloWorld {
@@ -75,6 +78,7 @@ impl HelloWorld {
             active_bars: HashMap::new(),
             _animation_task: None,
             window_height: 1080.0,
+            config: Config::load(),
         }
     }
 
@@ -150,7 +154,7 @@ impl Render for HelloWorld {
             }))
             .flex()
             .flex_col()
-            .bg(rgb(0x505050))
+            .bg(self.config.bg_color)
             .size_full()
             .justify_end()
             .shadow_lg()
