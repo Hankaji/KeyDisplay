@@ -131,14 +131,17 @@ impl Render for HelloWorld {
                     .get(&key_lower)
                     .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
                     .unwrap_or(false);
+
                 let bars = self
                     .active_bars
                     .get(&key_lower)
                     .map(|bs| bs.iter().map(|b| b.geometry()).collect())
                     .unwrap_or_default();
+
                 KeyOverlay::new(kc.key.clone())
                     .bars(bars)
                     .pressed(is_pressed)
+                    .width(kc.width.to_definite_length())
             })
             .collect();
 

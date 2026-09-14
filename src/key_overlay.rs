@@ -1,6 +1,6 @@
 use gpui::{
-    App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div,
-    prelude::FluentBuilder, px, rgb,
+    App, DefiniteLength, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
+    div, prelude::FluentBuilder, px, rgb,
 };
 
 /// Each tuple is `(top_px, height_px)` relative to the square's top edge.
@@ -10,6 +10,7 @@ pub struct KeyOverlay {
     label: SharedString,
     bars: Vec<(f32, f32)>,
     is_pressed: bool,
+    width: DefiniteLength,
 }
 
 impl KeyOverlay {
@@ -18,6 +19,7 @@ impl KeyOverlay {
             label: label.into(),
             bars: vec![],
             is_pressed: false,
+            width: px(64.0).into(),
         }
     }
 
@@ -30,6 +32,11 @@ impl KeyOverlay {
         self.is_pressed = is_pressed;
         self
     }
+
+    pub fn width(mut self, width: DefiniteLength) -> Self {
+        self.width = width;
+        self
+    }
 }
 
 impl RenderOnce for KeyOverlay {
@@ -37,7 +44,8 @@ impl RenderOnce for KeyOverlay {
         let square_size = 64.0_f32;
 
         let mut container = div()
-            .size(px(square_size))
+            .w(self.width)
+            .h(px(square_size))
             .border_2()
             .border_color(rgb(0xffffff))
             .when(self.is_pressed, |div| div.bg(rgb(0x808080)))

@@ -1,14 +1,58 @@
-use gpui::{rgb, Rgba};
-use serde::Deserialize;
+use gpui::{rgb, DefiniteLength, Rgba, px};
+use serde::{Deserialize, Deserializer};
 use std::{
     error::Error,
     fs,
     path::{Path, PathBuf},
+    str::FromStr,
 };
+
+#[derive(Debug)]
+pub enum KeyWidth {
+    Px(f32),
+    Pct(f32),
+}
+
+impl KeyWidth {
+    pub fn to_definite_length(&self) -> DefiniteLength {
+        match self {
+            KeyWidth::Px(v) => px(*v).into(),
+            KeyWidth::Pct(v) => px(v * 64.0).into(),
+        }
+    }
+}
+
+impl FromStr for KeyWidth {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(inner) = s.strip_prefix("Px(").and_then(|s| s.strip_suffix(')')) {
+            inner.trim().parse::<f32>().map(KeyWidth::Px).map_err(|e| e.to_string())
+        } else if let Some(inner) = s.strip_prefix("Pct(").and_then(|s| s.strip_suffix(')')) {
+            inner.trim().parse::<f32>().map(KeyWidth::Pct).map_err(|e| e.to_string())
+        } else {
+            Err(format!("invalid width '{s}', expected Px(n) or Pct(n)"))
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for KeyWidth {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+fn default_key_width() -> KeyWidth {
+    KeyWidth::Px(64.0)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct KeyConfig {
     pub key: String,
+    #[serde(default = "default_key_width")]
+    pub width: KeyWidth,
 }
 
 #[derive(Debug, Deserialize)]
