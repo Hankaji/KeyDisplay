@@ -13,10 +13,8 @@ use gpui::{
 use key_overlay::KeyOverlay;
 
 const SQUARE_SIZE: f32 = 64.0;
-const SPEED: f32 = 600.0;
-const KEY_REPEAT_WINDOW: Duration = Duration::from_millis(100);
+const SPEED: f32 = 1000.0;
 
-/// A bar that has been released and is animating upward off screen.
 struct FloatingBar {
     press_time: Instant,
     released_at: Instant,
@@ -24,10 +22,7 @@ struct FloatingBar {
 
 impl FloatingBar {
     fn geometry(&self) -> (f32, f32) {
-        let held = self
-            .released_at
-            .duration_since(self.press_time)
-            .as_secs_f32();
+        let held = self.released_at.duration_since(self.press_time).as_secs_f32();
         let floating = self.released_at.elapsed().as_secs_f32();
         let height = held * SPEED;
         let top = -(held + floating) * SPEED;
@@ -41,9 +36,7 @@ impl FloatingBar {
 
 struct HelloWorld {
     focus_handle: FocusHandle,
-    /// Keys currently held down, mapped to the time they were pressed.
     held_keys: HashMap<String, Instant>,
-    /// Bars that have been released and are floating upward.
     floating_bars: HashMap<String, Vec<FloatingBar>>,
     _animation_task: Option<Task<()>>,
     window_height: f32,
@@ -65,58 +58,39 @@ impl HelloWorld {
     }
 
     fn start_animation(cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(
-            async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
-                loop {
-                    cx.background_executor()
-                        .timer(Duration::from_millis(16))
-                        .await;
+        cx.spawn(async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(16)).await;
 
-                    let still_running = view
-                        .update(cx, |this, cx| {
-                            let wh = this.window_height;
-                            this.floating_bars.retain(|_, bars| {
-                                bars.retain(|b| !b.is_offscreen(wh));
-                                !bars.is_empty()
-                            });
+                let still_running = view
+                    .update(cx, |this, cx| {
+                        let wh = this.window_height;
+                        this.floating_bars.retain(|_, bars| {
+                            bars.retain(|b| !b.is_offscreen(wh));
+                            !bars.is_empty()
+                        });
 
-                            if this.held_keys.is_empty() && this.floating_bars.is_empty() {
-                                false
-                            } else {
-                                cx.notify();
-                                true
-                            }
-                        })
-                        .unwrap_or(false);
+                        if this.held_keys.is_empty() && this.floating_bars.is_empty() {
+                            false
+                        } else {
+                            cx.notify();
+                            true
+                        }
+                    })
+                    .unwrap_or(false);
 
-                    if !still_running {
-                        break;
-                    }
+                if !still_running {
+                    break;
                 }
-            },
-        )
+            }
+        })
     }
 
     fn press_key(&mut self, key: String, cx: &mut Context<Self>) {
         if self.held_keys.contains_key(&key) {
             return;
         }
-
-        // On Linux the OS fires real KeyUp+KeyDown pairs for key repeat. If a bar
-        // was released very recently, pull it back out of floating_bars and restore
-        // its original press_time so the geometry continues seamlessly.
-        let press_time = self
-            .floating_bars
-            .get_mut(&key)
-            .and_then(|bars| {
-                let pos = bars
-                    .iter()
-                    .rposition(|b| b.released_at.elapsed() < KEY_REPEAT_WINDOW)?;
-                Some(bars.remove(pos).press_time)
-            })
-            .unwrap_or_else(Instant::now);
-
-        self.held_keys.insert(key, press_time);
+        self.held_keys.insert(key, Instant::now());
         self._animation_task = Some(Self::start_animation(cx));
     }
 
@@ -125,10 +99,7 @@ impl HelloWorld {
             self.floating_bars
                 .entry(key.to_string())
                 .or_default()
-                .push(FloatingBar {
-                    press_time,
-                    released_at: Instant::now(),
-                });
+                .push(FloatingBar { press_time, released_at: Instant::now() });
         }
         cx.notify();
     }
@@ -151,16 +122,7 @@ impl Render for HelloWorld {
             .iter()
             .map(|kc| {
                 let key_lower = kc.key.to_lowercase();
-
-                let is_pressed = self.held_keys.contains_key(&key_lower)
-                    || self
-                        .floating_bars
-                        .get(&key_lower)
-                        .map(|bars| {
-                            bars.iter()
-                                .any(|b| b.released_at.elapsed() < KEY_REPEAT_WINDOW)
-                        })
-                        .unwrap_or(false);
+                let is_pressed = self.held_keys.contains_key(&key_lower);
 
                 let mut bars: Vec<(f32, f32)> = self
                     .floating_bars
@@ -181,12 +143,13 @@ impl Render for HelloWorld {
             })
             .collect();
 
+        let bg_opaque = Hsla::from(self.config.bg_color);
+        let bg_fade = Hsla { a: 0.0, ..bg_opaque };
+
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                let key = event.keystroke.key.clone();
-                // eprintln!("key: {key:?}"); // TODO: Use for debug later
-                this.press_key(key, cx);
+                this.press_key(event.keystroke.key.clone(), cx);
             }))
             .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
                 this.release_key(&event.keystroke.key, cx);
@@ -198,7 +161,6 @@ impl Render for HelloWorld {
                         let was = get(&this.prev_modifiers);
                         let is = get(&new);
                         if !was && is {
-                            eprintln!("modifier down: {name}");
                             this.press_key(name.to_string(), cx);
                         } else if was && !is {
                             this.release_key(name, cx);
@@ -213,10 +175,6 @@ impl Render for HelloWorld {
             .bg(self.config.bg_color)
             .size_full()
             .justify_end()
-            .shadow_lg()
-            .border_1()
-            .border_color(rgb(0x0000ff))
-            .text_xl()
             .text_color(rgb(0xffffff))
             .child(
                 div()
@@ -227,12 +185,7 @@ impl Render for HelloWorld {
                     .p_2()
                     .children(overlays),
             )
-            .child({
-                let bg_opaque = Hsla::from(self.config.bg_color);
-                let bg_fade = Hsla {
-                    a: 0.0,
-                    ..bg_opaque
-                };
+            .child(
                 div()
                     .absolute()
                     .top_0()
@@ -243,25 +196,20 @@ impl Render for HelloWorld {
                         180.0,
                         linear_color_stop(bg_opaque, 0.0),
                         linear_color_stop(bg_fade, 1.0),
-                    ))
-            })
+                    )),
+            )
     }
 }
 
 fn main() {
     Application::new().run(|cx: &mut App| {
-        cx.open_window(
-            WindowOptions {
-                ..Default::default()
-            },
-            |window, cx| {
-                cx.new(|cx| {
-                    let view = HelloWorld::new(cx);
-                    window.focus(&view.focus_handle);
-                    view
-                })
-            },
-        )
+        cx.open_window(WindowOptions::default(), |window, cx| {
+            cx.new(|cx| {
+                let view = HelloWorld::new(cx);
+                window.focus(&view.focus_handle);
+                view
+            })
+        })
         .unwrap();
     });
 }
