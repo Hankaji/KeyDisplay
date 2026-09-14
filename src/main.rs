@@ -14,59 +14,37 @@ use key_overlay::KeyOverlay;
 
 const SQUARE_SIZE: f32 = 64.0;
 const SPEED: f32 = 600.0;
+const KEY_REPEAT_WINDOW: Duration = Duration::from_millis(100);
 
-struct KeyBar {
+/// A bar that has been released and is animating upward off screen.
+struct FloatingBar {
     press_time: Instant,
-    release_time: Option<Instant>,
+    released_at: Instant,
 }
 
-impl KeyBar {
-    fn new() -> Self {
-        Self {
-            press_time: Instant::now(),
-            release_time: None,
-        }
-    }
-
-    fn held_secs(&self) -> f32 {
-        match self.release_time {
-            None => self.press_time.elapsed().as_secs_f32(),
-            Some(t) => t.duration_since(self.press_time).as_secs_f32(),
-        }
-    }
-
-    fn float_secs(&self) -> f32 {
-        match self.release_time {
-            None => 0.0,
-            Some(t) => t.elapsed().as_secs_f32(),
-        }
-    }
-
-    /// Bar geometry as (top_px, height_px) relative to the square's top edge.
-    ///
-    /// Bottom is anchored at the square's top edge (0) while held, then floats up.
-    /// Height starts at 0 and grows at SPEED px/s while the key is held.
-    ///
-    ///   height = held_secs * SPEED
-    ///   top    = -(held_secs + float_secs) * SPEED   ← always moves at SPEED
-    ///   bottom = top + height = -float_secs * SPEED   ← 0 while held, rises after
+impl FloatingBar {
     fn geometry(&self) -> (f32, f32) {
-        let held = self.held_secs();
-        let floating = self.float_secs();
+        let held = self
+            .released_at
+            .duration_since(self.press_time)
+            .as_secs_f32();
+        let floating = self.released_at.elapsed().as_secs_f32();
         let height = held * SPEED;
         let top = -(held + floating) * SPEED;
         (top, height)
     }
 
     fn is_offscreen(&self, window_height: f32) -> bool {
-        self.release_time.is_some() && self.float_secs() * SPEED >= window_height - SQUARE_SIZE
+        self.released_at.elapsed().as_secs_f32() * SPEED >= window_height - SQUARE_SIZE
     }
 }
 
 struct HelloWorld {
     focus_handle: FocusHandle,
-    active_bars: HashMap<String, Vec<KeyBar>>,
-    /// Kept alive so the animation loop isn't cancelled.
+    /// Keys currently held down, mapped to the time they were pressed.
+    held_keys: HashMap<String, Instant>,
+    /// Bars that have been released and are floating upward.
+    floating_bars: HashMap<String, Vec<FloatingBar>>,
     _animation_task: Option<Task<()>>,
     window_height: f32,
     config: Config,
@@ -77,7 +55,8 @@ impl HelloWorld {
     fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
-            active_bars: HashMap::new(),
+            held_keys: HashMap::new(),
+            floating_bars: HashMap::new(),
             _animation_task: None,
             window_height: 1080.0,
             config: Config::load(),
@@ -96,12 +75,12 @@ impl HelloWorld {
                     let still_running = view
                         .update(cx, |this, cx| {
                             let wh = this.window_height;
-                            this.active_bars.retain(|_, bars| {
+                            this.floating_bars.retain(|_, bars| {
                                 bars.retain(|b| !b.is_offscreen(wh));
                                 !bars.is_empty()
                             });
 
-                            if this.active_bars.is_empty() {
+                            if this.held_keys.is_empty() && this.floating_bars.is_empty() {
                                 false
                             } else {
                                 cx.notify();
@@ -119,24 +98,42 @@ impl HelloWorld {
     }
 
     fn press_key(&mut self, key: String, cx: &mut Context<Self>) {
-        let bars = self.active_bars.entry(key).or_default();
-        if !bars.iter().any(|b| b.release_time.is_none()) {
-            bars.push(KeyBar::new());
-            self._animation_task = Some(Self::start_animation(cx));
+        if self.held_keys.contains_key(&key) {
+            return;
         }
+
+        // On Linux the OS fires real KeyUp+KeyDown pairs for key repeat. If a bar
+        // was released very recently, pull it back out of floating_bars and restore
+        // its original press_time so the geometry continues seamlessly.
+        let press_time = self
+            .floating_bars
+            .get_mut(&key)
+            .and_then(|bars| {
+                let pos = bars
+                    .iter()
+                    .rposition(|b| b.released_at.elapsed() < KEY_REPEAT_WINDOW)?;
+                Some(bars.remove(pos).press_time)
+            })
+            .unwrap_or_else(Instant::now);
+
+        self.held_keys.insert(key, press_time);
+        self._animation_task = Some(Self::start_animation(cx));
     }
 
     fn release_key(&mut self, key: &str, cx: &mut Context<Self>) {
-        if let Some(bars) = self.active_bars.get_mut(key)
-            && let Some(bar) = bars.iter_mut().find(|b| b.release_time.is_none())
-        {
-            bar.release_time = Some(Instant::now());
+        if let Some(press_time) = self.held_keys.remove(key) {
+            self.floating_bars
+                .entry(key.to_string())
+                .or_default()
+                .push(FloatingBar {
+                    press_time,
+                    released_at: Instant::now(),
+                });
         }
         cx.notify();
     }
 }
 
-/// Maps each modifier bool field to a stable key name.
 const MODIFIERS: &[(&str, fn(&Modifiers) -> bool)] = &[
     ("shift", |m| m.shift),
     ("ctrl", |m| m.control),
@@ -154,17 +151,27 @@ impl Render for HelloWorld {
             .iter()
             .map(|kc| {
                 let key_lower = kc.key.to_lowercase();
-                let is_pressed = self
-                    .active_bars
-                    .get(&key_lower)
-                    .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
-                    .unwrap_or(false);
 
-                let bars = self
-                    .active_bars
+                let is_pressed = self.held_keys.contains_key(&key_lower)
+                    || self
+                        .floating_bars
+                        .get(&key_lower)
+                        .map(|bars| {
+                            bars.iter()
+                                .any(|b| b.released_at.elapsed() < KEY_REPEAT_WINDOW)
+                        })
+                        .unwrap_or(false);
+
+                let mut bars: Vec<(f32, f32)> = self
+                    .floating_bars
                     .get(&key_lower)
                     .map(|bs| bs.iter().map(|b| b.geometry()).collect())
                     .unwrap_or_default();
+
+                if let Some(&press_time) = self.held_keys.get(&key_lower) {
+                    let held = press_time.elapsed().as_secs_f32();
+                    bars.push((-held * SPEED, held * SPEED));
+                }
 
                 KeyOverlay::new(kc.key.clone())
                     .bars(bars)
@@ -184,20 +191,22 @@ impl Render for HelloWorld {
             .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
                 this.release_key(&event.keystroke.key, cx);
             }))
-            .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _window, cx| {
-                let new = event.modifiers;
-                for (name, get) in MODIFIERS {
-                    let was = get(&this.prev_modifiers);
-                    let is = get(&new);
-                    if !was && is {
-                        eprintln!("modifier down: {name}");
-                        this.press_key(name.to_string(), cx);
-                    } else if was && !is {
-                        this.release_key(name, cx);
+            .on_modifiers_changed(cx.listener(
+                |this, event: &ModifiersChangedEvent, _window, cx| {
+                    let new = event.modifiers;
+                    for (name, get) in MODIFIERS {
+                        let was = get(&this.prev_modifiers);
+                        let is = get(&new);
+                        if !was && is {
+                            eprintln!("modifier down: {name}");
+                            this.press_key(name.to_string(), cx);
+                        } else if was && !is {
+                            this.release_key(name, cx);
+                        }
                     }
-                }
-                this.prev_modifiers = new;
-            }))
+                    this.prev_modifiers = new;
+                },
+            ))
             .flex()
             .flex_col()
             .bg(self.config.bg_color)
