@@ -22,7 +22,10 @@ struct FloatingBar {
 
 impl FloatingBar {
     fn geometry(&self) -> (f32, f32) {
-        let held = self.released_at.duration_since(self.press_time).as_secs_f32();
+        let held = self
+            .released_at
+            .duration_since(self.press_time)
+            .as_secs_f32();
         let floating = self.released_at.elapsed().as_secs_f32();
         let height = held * SPEED;
         let top = -(held + floating) * SPEED;
@@ -58,32 +61,36 @@ impl HelloWorld {
     }
 
     fn start_animation(cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
-            loop {
-                cx.background_executor().timer(Duration::from_millis(16)).await;
+        cx.spawn(
+            async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
 
-                let still_running = view
-                    .update(cx, |this, cx| {
-                        let wh = this.window_height;
-                        this.floating_bars.retain(|_, bars| {
-                            bars.retain(|b| !b.is_offscreen(wh));
-                            !bars.is_empty()
-                        });
+                    let still_running = view
+                        .update(cx, |this, cx| {
+                            let wh = this.window_height;
+                            this.floating_bars.retain(|_, bars| {
+                                bars.retain(|b| !b.is_offscreen(wh));
+                                !bars.is_empty()
+                            });
 
-                        if this.held_keys.is_empty() && this.floating_bars.is_empty() {
-                            false
-                        } else {
-                            cx.notify();
-                            true
-                        }
-                    })
-                    .unwrap_or(false);
+                            if this.held_keys.is_empty() && this.floating_bars.is_empty() {
+                                false
+                            } else {
+                                cx.notify();
+                                true
+                            }
+                        })
+                        .unwrap_or(false);
 
-                if !still_running {
-                    break;
+                    if !still_running {
+                        break;
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 
     fn press_key(&mut self, key: String, cx: &mut Context<Self>) {
@@ -99,7 +106,10 @@ impl HelloWorld {
             self.floating_bars
                 .entry(key.to_string())
                 .or_default()
-                .push(FloatingBar { press_time, released_at: Instant::now() });
+                .push(FloatingBar {
+                    press_time,
+                    released_at: Instant::now(),
+                });
         }
         cx.notify();
     }
@@ -144,7 +154,10 @@ impl Render for HelloWorld {
             .collect();
 
         let bg_opaque = Hsla::from(self.config.bg_color);
-        let bg_fade = Hsla { a: 0.0, ..bg_opaque };
+        let bg_fade = Hsla {
+            a: 0.0,
+            ..bg_opaque
+        };
 
         div()
             .track_focus(&self.focus_handle)
