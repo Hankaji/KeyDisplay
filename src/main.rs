@@ -1,11 +1,14 @@
+mod config;
 mod key_overlay;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use config::Config;
 use gpui::{
     App, Application, AsyncApp, Context, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent,
-    ParentElement, Styled, Task, WeakEntity, Window, WindowOptions, div, prelude::*, rgb,
+    Modifiers, ModifiersChangedEvent, ParentElement, Styled, Task, WeakEntity, Window,
+    WindowOptions, div, prelude::*, rgb,
 };
 use key_overlay::KeyOverlay;
 
@@ -66,6 +69,8 @@ struct HelloWorld {
     /// Kept alive so the animation loop isn't cancelled.
     _animation_task: Option<Task<()>>,
     window_height: f32,
+    config: Config,
+    prev_modifiers: Modifiers,
 }
 
 impl HelloWorld {
@@ -75,6 +80,8 @@ impl HelloWorld {
             active_bars: HashMap::new(),
             _animation_task: None,
             window_height: 1080.0,
+            config: Config::load(),
+            prev_modifiers: Modifiers::default(),
         }
     }
 
@@ -110,47 +117,90 @@ impl HelloWorld {
             },
         )
     }
+
+    fn press_key(&mut self, key: String, cx: &mut Context<Self>) {
+        let bars = self.active_bars.entry(key).or_default();
+        if !bars.iter().any(|b| b.release_time.is_none()) {
+            bars.push(KeyBar::new());
+            self._animation_task = Some(Self::start_animation(cx));
+        }
+    }
+
+    fn release_key(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(bars) = self.active_bars.get_mut(key)
+            && let Some(bar) = bars.iter_mut().find(|b| b.release_time.is_none())
+        {
+            bar.release_time = Some(Instant::now());
+        }
+        cx.notify();
+    }
 }
+
+/// Maps each modifier bool field to a stable key name.
+const MODIFIERS: &[(&str, fn(&Modifiers) -> bool)] = &[
+    ("shift", |m| m.shift),
+    ("ctrl", |m| m.control),
+    ("alt", |m| m.alt),
+    ("super", |m| m.platform),
+];
 
 impl Render for HelloWorld {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.window_height = window.viewport_size().height.into();
 
-        let is_a_pressed = self
-            .active_bars
-            .get("a")
-            .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
-            .unwrap_or(false);
+        let overlays: Vec<KeyOverlay> = self
+            .config
+            .keys
+            .iter()
+            .map(|kc| {
+                let key_lower = kc.key.to_lowercase();
+                let is_pressed = self
+                    .active_bars
+                    .get(&key_lower)
+                    .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
+                    .unwrap_or(false);
 
-        let bars_a: Vec<(f32, f32)> = self
-            .active_bars
-            .get("a")
-            .map(|bs| bs.iter().map(|b| b.geometry()).collect())
-            .unwrap_or_default();
+                let bars = self
+                    .active_bars
+                    .get(&key_lower)
+                    .map(|bs| bs.iter().map(|b| b.geometry()).collect())
+                    .unwrap_or_default();
+
+                KeyOverlay::new(kc.key.clone())
+                    .bars(bars)
+                    .pressed(is_pressed)
+                    .width(kc.width.to_definite_length())
+                    .bar_color(kc.bar_color)
+            })
+            .collect();
 
         div()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 let key = event.keystroke.key.clone();
-                let bars = this.active_bars.entry(key).or_default();
-
-                if !bars.iter().any(|b| b.release_time.is_none()) {
-                    bars.push(KeyBar::new());
-                    this._animation_task = Some(Self::start_animation(cx));
-                }
+                eprintln!("key: {key:?}");
+                this.press_key(key, cx);
             }))
             .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
-                let key = &event.keystroke.key;
-                if let Some(bars) = this.active_bars.get_mut(key)
-                    && let Some(bar) = bars.iter_mut().find(|b| b.release_time.is_none())
-                {
-                    bar.release_time = Some(Instant::now());
+                this.release_key(&event.keystroke.key, cx);
+            }))
+            .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _window, cx| {
+                let new = event.modifiers;
+                for (name, get) in MODIFIERS {
+                    let was = get(&this.prev_modifiers);
+                    let is = get(&new);
+                    if !was && is {
+                        eprintln!("modifier down: {name}");
+                        this.press_key(name.to_string(), cx);
+                    } else if was && !is {
+                        this.release_key(name, cx);
+                    }
                 }
-                cx.notify();
+                this.prev_modifiers = new;
             }))
             .flex()
             .flex_col()
-            .bg(rgb(0x505050))
+            .bg(self.config.bg_color)
             .size_full()
             .justify_end()
             .shadow_lg()
@@ -165,7 +215,7 @@ impl Render for HelloWorld {
                     .w_full()
                     .gap_2()
                     .p_2()
-                    .child(KeyOverlay::new("A").bars(bars_a).pressed(is_a_pressed)),
+                    .children(overlays),
             )
     }
 }
