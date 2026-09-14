@@ -48,11 +48,17 @@ fn default_key_width() -> KeyWidth {
     KeyWidth::Px(64.0)
 }
 
+fn default_bar_color() -> Rgba {
+    rgb(0x808080)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct KeyConfig {
     pub key: String,
     #[serde(default = "default_key_width")]
     pub width: KeyWidth,
+    #[serde(default = "default_bar_color")]
+    pub bar_color: Rgba,
 }
 
 #[derive(Debug, Deserialize)]

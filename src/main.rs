@@ -170,6 +170,7 @@ impl Render for HelloWorld {
                     .bars(bars)
                     .pressed(is_pressed)
                     .width(kc.width.to_definite_length())
+                    .bar_color(kc.bar_color)
             })
             .collect();
 
