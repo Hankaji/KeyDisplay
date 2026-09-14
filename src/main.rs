@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 
 use config::Config;
 use gpui::{
-    App, Application, AsyncApp, Context, FocusHandle, IntoElement, KeyDownEvent, KeyUpEvent,
+    App, Application, AsyncApp, Context, FocusHandle, Hsla, IntoElement, KeyDownEvent, KeyUpEvent,
     Modifiers, ModifiersChangedEvent, ParentElement, Styled, Task, WeakEntity, Window,
-    WindowOptions, div, prelude::*, rgb,
+    WindowOptions, div, linear_color_stop, linear_gradient, prelude::*, px, rgb,
 };
 use key_overlay::KeyOverlay;
 
@@ -185,7 +185,7 @@ impl Render for HelloWorld {
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
                 let key = event.keystroke.key.clone();
-                eprintln!("key: {key:?}");
+                // eprintln!("key: {key:?}"); // TODO: Use for debug later
                 this.press_key(key, cx);
             }))
             .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
@@ -209,6 +209,7 @@ impl Render for HelloWorld {
             ))
             .flex()
             .flex_col()
+            .relative()
             .bg(self.config.bg_color)
             .size_full()
             .justify_end()
@@ -226,6 +227,24 @@ impl Render for HelloWorld {
                     .p_2()
                     .children(overlays),
             )
+            .child({
+                let bg_opaque = Hsla::from(self.config.bg_color);
+                let bg_fade = Hsla {
+                    a: 0.0,
+                    ..bg_opaque
+                };
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h(px(200.0))
+                    .bg(linear_gradient(
+                        180.0,
+                        linear_color_stop(bg_opaque, 0.0),
+                        linear_color_stop(bg_fade, 1.0),
+                    ))
+            })
     }
 }
 
