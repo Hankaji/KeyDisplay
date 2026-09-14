@@ -9,20 +9,11 @@ use gpui::{
 };
 use key_overlay::KeyOverlay;
 
-// ── Tuning constants ──────────────────────────────────────────────────────────
 const SQUARE_SIZE: f32 = 64.0;
-/// px per second the bar grows while the key is held
-const PIXELS_PER_SEC: f32 = 300.0;
-/// minimum bar height so even a quick tap is visible
-const MIN_HEIGHT: f32 = 10.0;
-/// px per second the bar floats upward after release
-const FLOAT_SPEED: f32 = 200.0;
-
-// ── KeyBar ────────────────────────────────────────────────────────────────────
+const SPEED: f32 = 600.0;
 
 struct KeyBar {
     press_time: Instant,
-    /// None while the key is still held
     release_time: Option<Instant>,
 }
 
@@ -34,51 +25,46 @@ impl KeyBar {
         }
     }
 
-    /// Height of the bar based on how long the key was (or is being) held.
-    fn height(&self) -> f32 {
-        let held = match self.release_time {
-            None => self.press_time.elapsed(),
-            Some(t) => t.duration_since(self.press_time),
-        };
-        (held.as_secs_f32() * PIXELS_PER_SEC).max(MIN_HEIGHT)
-    }
-
-    /// How far the bar has floated upward since release (0 while still held).
-    fn float_offset(&self) -> f32 {
+    fn held_secs(&self) -> f32 {
         match self.release_time {
-            None => 0.0,
-            Some(t) => t.elapsed().as_secs_f32() * FLOAT_SPEED,
+            None => self.press_time.elapsed().as_secs_f32(),
+            Some(t) => t.duration_since(self.press_time).as_secs_f32(),
         }
     }
 
-    /// `top_px` is relative to the square's top edge; can be negative (above square).
-    fn geometry(&self) -> (f32, f32) {
-        let h = self.height();
-        let offset = self.float_offset();
-        // Bar bottom is at SQUARE_SIZE - offset; bar top is h pixels above that.
-        let top = SQUARE_SIZE - h - offset;
-        (top, h)
+    fn float_secs(&self) -> f32 {
+        match self.release_time {
+            None => 0.0,
+            Some(t) => t.elapsed().as_secs_f32(),
+        }
     }
 
-    /// True once the bar's bottom edge has exited the top of the window.
+    /// Bar geometry as (top_px, height_px) relative to the square's top edge.
     ///
-    /// The bar's bottom in window-space = (window_height - SQUARE_SIZE) + (SQUARE_SIZE - float_offset)
-    ///                                  = window_height - float_offset
-    /// It exits when that value drops below 0, i.e. float_offset >= window_height.
+    /// Bottom is anchored at the square's top edge (0) while held, then floats up.
+    /// Height starts at 0 and grows at SPEED px/s while the key is held.
+    ///
+    ///   height = held_secs * SPEED
+    ///   top    = -(held_secs + float_secs) * SPEED   ← always moves at SPEED
+    ///   bottom = top + height = -float_secs * SPEED   ← 0 while held, rises after
+    fn geometry(&self) -> (f32, f32) {
+        let held = self.held_secs();
+        let floating = self.float_secs();
+        let height = held * SPEED;
+        let top = -(held + floating) * SPEED;
+        (top, height)
+    }
+
     fn is_offscreen(&self, window_height: f32) -> bool {
-        self.release_time.is_some() && self.float_offset() >= window_height
+        self.release_time.is_some() && self.float_secs() * SPEED >= window_height - SQUARE_SIZE
     }
 }
 
-// ── Root view ─────────────────────────────────────────────────────────────────
-
 struct HelloWorld {
     focus_handle: FocusHandle,
-    /// Per-key list of active bars (held + floating).
     active_bars: HashMap<String, Vec<KeyBar>>,
     /// Kept alive so the animation loop isn't cancelled.
     _animation_task: Option<Task<()>>,
-    /// Updated every render; used by the animation task for precise cleanup.
     window_height: f32,
 }
 
@@ -88,49 +74,54 @@ impl HelloWorld {
             focus_handle: cx.focus_handle(),
             active_bars: HashMap::new(),
             _animation_task: None,
-            window_height: 1080.0, // reasonable default before first render
+            window_height: 1080.0,
         }
     }
 
     fn start_animation(cx: &mut Context<Self>) -> Task<()> {
-        cx.spawn(async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
-            loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(16))
-                    .await;
+        cx.spawn(
+            async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
+                loop {
+                    cx.background_executor()
+                        .timer(Duration::from_millis(16))
+                        .await;
 
-                let still_running = view
-                    .update(cx, |this, cx| {
-                        let wh = this.window_height;
-                        // Drop bars whose bottom edge has exited the top of the window
-                        this.active_bars.retain(|_, bars| {
-                            bars.retain(|b| !b.is_offscreen(wh));
-                            !bars.is_empty()
-                        });
+                    let still_running = view
+                        .update(cx, |this, cx| {
+                            let wh = this.window_height;
+                            this.active_bars.retain(|_, bars| {
+                                bars.retain(|b| !b.is_offscreen(wh));
+                                !bars.is_empty()
+                            });
 
-                        if this.active_bars.is_empty() {
-                            false
-                        } else {
-                            cx.notify();
-                            true
-                        }
-                    })
-                    .unwrap_or(false);
+                            if this.active_bars.is_empty() {
+                                false
+                            } else {
+                                cx.notify();
+                                true
+                            }
+                        })
+                        .unwrap_or(false);
 
-                if !still_running {
-                    break;
+                    if !still_running {
+                        break;
+                    }
                 }
-            }
-        })
+            },
+        )
     }
 }
 
 impl Render for HelloWorld {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Keep window_height in sync so the animation task can use it
         self.window_height = window.viewport_size().height.into();
 
-        // Pre-compute bar geometries before borrowing cx for listeners
+        let is_a_pressed = self
+            .active_bars
+            .get("a")
+            .map(|bs| bs.iter().any(|b| b.release_time.is_none()))
+            .unwrap_or(false);
+
         let bars_a: Vec<(f32, f32)> = self
             .active_bars
             .get("a")
@@ -143,7 +134,6 @@ impl Render for HelloWorld {
                 let key = event.keystroke.key.clone();
                 let bars = this.active_bars.entry(key).or_default();
 
-                // Ignore OS key-repeat: only add a bar on the initial press
                 if !bars.iter().any(|b| b.release_time.is_none()) {
                     bars.push(KeyBar::new());
                     this._animation_task = Some(Self::start_animation(cx));
@@ -151,10 +141,10 @@ impl Render for HelloWorld {
             }))
             .on_key_up(cx.listener(|this, event: &KeyUpEvent, _window, cx| {
                 let key = &event.keystroke.key;
-                if let Some(bars) = this.active_bars.get_mut(key) {
-                    if let Some(bar) = bars.iter_mut().find(|b| b.release_time.is_none()) {
-                        bar.release_time = Some(Instant::now());
-                    }
+                if let Some(bars) = this.active_bars.get_mut(key)
+                    && let Some(bar) = bars.iter_mut().find(|b| b.release_time.is_none())
+                {
+                    bar.release_time = Some(Instant::now());
                 }
                 cx.notify();
             }))
@@ -175,7 +165,7 @@ impl Render for HelloWorld {
                     .w_full()
                     .gap_2()
                     .p_2()
-                    .child(KeyOverlay::new("A").bars(bars_a)),
+                    .child(KeyOverlay::new("A").bars(bars_a).pressed(is_a_pressed)),
             )
     }
 }

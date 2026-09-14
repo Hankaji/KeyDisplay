@@ -1,4 +1,7 @@
-use gpui::{App, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px, rgb};
+use gpui::{
+    App, IntoElement, ParentElement, RenderOnce, Styled, Window, div, prelude::FluentBuilder, px,
+    rgb,
+};
 
 /// Each tuple is `(top_px, height_px)` relative to the square's top edge.
 /// top_px can be negative (bar extending above the square, clipped by overflow_hidden).
@@ -6,6 +9,7 @@ use gpui::{App, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px,
 pub struct KeyOverlay {
     label: &'static str,
     bars: Vec<(f32, f32)>,
+    is_pressed: bool,
 }
 
 impl KeyOverlay {
@@ -13,11 +17,17 @@ impl KeyOverlay {
         Self {
             label,
             bars: vec![],
+            is_pressed: false,
         }
     }
 
     pub fn bars(mut self, bars: Vec<(f32, f32)>) -> Self {
         self.bars = bars;
+        self
+    }
+
+    pub fn pressed(mut self, is_pressed: bool) -> Self {
+        self.is_pressed = is_pressed;
         self
     }
 }
@@ -28,8 +38,9 @@ impl RenderOnce for KeyOverlay {
 
         let mut container = div()
             .size(px(square_size))
-            .border_1()
+            .border_2()
             .border_color(rgb(0xffffff))
+            .when(self.is_pressed, |div| div.bg(rgb(0x808080)))
             .relative()
             .flex()
             .justify_center()
@@ -47,7 +58,6 @@ impl RenderOnce for KeyOverlay {
             );
         }
 
-        // Label sits on top of all bars
         container.child(div().relative().child(self.label))
     }
 }
