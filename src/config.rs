@@ -65,6 +65,7 @@ pub struct KeyConfig {
 #[serde(default)]
 pub struct Config {
     pub bg_color: Rgba,
+    pub speed: f32,
     #[serde(rename = "Keys")]
     pub keys: Vec<KeyConfig>,
 }
@@ -73,6 +74,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             bg_color: rgb(0x505050),
+            speed: 1000.0,
             keys: Vec::new(),
         }
     }

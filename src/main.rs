@@ -14,7 +14,6 @@ use gpui::{
 use key_overlay::KeyOverlay;
 
 const SQUARE_SIZE: f32 = 64.0;
-const SPEED: f32 = 1000.0;
 
 struct FloatingBar {
     press_time: Instant,
@@ -22,23 +21,23 @@ struct FloatingBar {
 }
 
 impl FloatingBar {
-    fn geometry(&self) -> (f32, f32) {
+    fn geometry(&self, speed: f32) -> (f32, f32) {
         let held = self
             .released_at
             .duration_since(self.press_time)
             .as_secs_f32();
         let floating = self.released_at.elapsed().as_secs_f32();
-        let height = held * SPEED;
-        let top = -(held + floating) * SPEED;
+        let height = held * speed;
+        let top = -(held + floating) * speed;
         (top, height)
     }
 
-    fn is_offscreen(&self, window_height: f32) -> bool {
-        self.released_at.elapsed().as_secs_f32() * SPEED >= window_height - SQUARE_SIZE
+    fn is_offscreen(&self, speed: f32, window_height: f32) -> bool {
+        self.released_at.elapsed().as_secs_f32() * speed >= window_height - SQUARE_SIZE
     }
 }
 
-struct HelloWorld {
+struct MainApllication {
     held_keys: HashMap<String, Instant>,
     floating_bars: HashMap<String, Vec<FloatingBar>>,
     _animation_task: Option<Task<()>>,
@@ -47,7 +46,7 @@ struct HelloWorld {
     config: Config,
 }
 
-impl HelloWorld {
+impl MainApllication {
     fn new(cx: &mut Context<Self>, key_observer: key_observer::KeyObserver) -> Self {
         let mut this = Self {
             held_keys: HashMap::new(),
@@ -74,7 +73,7 @@ impl HelloWorld {
         });
 
         cx.spawn(
-            async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
+            async move |view: WeakEntity<MainApllication>, cx: &mut AsyncApp| {
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(16))
@@ -104,7 +103,7 @@ impl HelloWorld {
 
     fn start_animation(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(
-            async move |view: WeakEntity<HelloWorld>, cx: &mut AsyncApp| {
+            async move |view: WeakEntity<MainApllication>, cx: &mut AsyncApp| {
                 loop {
                     cx.background_executor()
                         .timer(Duration::from_millis(16))
@@ -113,8 +112,9 @@ impl HelloWorld {
                     let still_running = view
                         .update(cx, |this, cx| {
                             let wh = this.window_height;
+                            let speed = this.config.speed;
                             this.floating_bars.retain(|_, bars| {
-                                bars.retain(|b| !b.is_offscreen(wh));
+                                bars.retain(|b| !b.is_offscreen(speed, wh));
                                 !bars.is_empty()
                             });
 
@@ -157,7 +157,7 @@ impl HelloWorld {
     }
 }
 
-impl Render for HelloWorld {
+impl Render for MainApllication {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.window_height = window.viewport_size().height.into();
 
@@ -166,18 +166,19 @@ impl Render for HelloWorld {
             .keys
             .iter()
             .map(|kc| {
+                let speed = self.config.speed;
                 let key_lower = kc.key.to_lowercase();
                 let is_pressed = self.held_keys.contains_key(&key_lower);
 
                 let mut bars: Vec<(f32, f32)> = self
                     .floating_bars
                     .get(&key_lower)
-                    .map(|bs| bs.iter().map(|b| b.geometry()).collect())
+                    .map(|bs| bs.iter().map(|b| b.geometry(speed)).collect())
                     .unwrap_or_default();
 
                 if let Some(&press_time) = self.held_keys.get(&key_lower) {
                     let held = press_time.elapsed().as_secs_f32();
-                    bars.push((-held * SPEED, held * SPEED));
+                    bars.push((-held * speed, held * speed));
                 }
 
                 KeyOverlay::new(kc.key.clone())
@@ -235,7 +236,7 @@ fn main() {
 
     Application::new().run(|cx: &mut App| {
         cx.open_window(WindowOptions::default(), |_window, cx| {
-            cx.new(|cx| HelloWorld::new(cx, key_observer))
+            cx.new(|cx| MainApllication::new(cx, key_observer))
         })
         .unwrap();
     });
